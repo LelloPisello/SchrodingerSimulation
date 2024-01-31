@@ -544,20 +544,29 @@ static SsResult _createDescriptorPools(SsInstance instance) {
     return SS_SUCCESS;
 }
 
+//compute: 2 immagini storage
+//rendering: 1 sampler
 static SsResult _createDescriptorSetLayouts(SsInstance instance) {
     //rendering
-    VkDescriptorSetLayoutBinding binding = {   
-        .binding = 0,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-        
+    VkDescriptorSetLayoutBinding bindings[2] = {   
+        {
+            .binding = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+        },{
+            .binding = 1,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT
+        }
+
     };
     
     VkDescriptorSetLayoutCreateInfo layoutInfo = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = 1,
-        .pBindings = &binding,
+        .pBindings = bindings,
     };
 
     if(vkCreateDescriptorSetLayout(instance->vulkanCore.device, &layoutInfo, NULL, &instance->rendering.descriptorLayout)) {
@@ -566,8 +575,9 @@ static SsResult _createDescriptorSetLayouts(SsInstance instance) {
 
     //compute, cambia solo tipo di binding e stage in cui viene usato
 
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    layoutInfo.bindingCount = 2;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     if(vkCreateDescriptorSetLayout(instance->vulkanCore.device, &layoutInfo, NULL, &instance->simulationCommons.descriptorLayout)) {
         return SS_ERROR_DESCRIPTOR_SET_LAYOUT_CREATION_FAILURE;
@@ -609,6 +619,8 @@ static SsResult _createSyncObjects(SsInstance instance) {
     return SS_SUCCESS;
 }
 
+//compute: 2 immagini storage + push Constants
+//rendering: 1 immagine
 static SsResult _createPipelineLayouts(SsInstance instance) {
     
     //rendering
@@ -675,6 +687,26 @@ static SsResult _createShaderModule(SsInstance instance, const char* filename, V
     }
 
     free(shaderCode);
+    return SS_SUCCESS;
+}
+
+static SsResult _createSimulationPipeline(SsInstance instance) {
+    
+    VkComputePipelineCreateInfo computeInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .layout = instance->simulationCommons.pipelineLayout,
+        .stage = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+            .module = instance->simulationCommons.compute,
+            .pName = "main"
+        },
+    };
+
+    if(vkCreateComputePipelines(instance->vulkanCore.device, VK_NULL_HANDLE, 1, &computeInfo, NULL, &instance->simulationCommons.pipeline)) {
+        return SS_ERROR_PIPELINE_CREATION_FAILURE;
+    }
+
     return SS_SUCCESS;
 }
 
@@ -836,12 +868,12 @@ SsResult ssCreateInstance(const SsInstanceCreateInfo *pArgs, SsInstance *pInstan
     SS_PRINT("\tCreating shaders...\n");
     SS_ERROR_CHECK(temp, _createShaderModule(ALIAS, "shaders/Vrendering.spv", &ALIAS->rendering.graphicsVert));
     SS_ERROR_CHECK(temp, _createShaderModule(ALIAS, "shaders/Frendering.spv", &ALIAS->rendering.graphicsFrag));
-    //_createShaderModule(ALIAS, "shaders/Frendering.spv", &ALIAS->rendering.graphicsFrag);
+    SS_ERROR_CHECK(temp, _createShaderModule(ALIAS, "shaders/simulation.spv", &ALIAS->simulationCommons.compute));
 
     SS_PRINT("\tCreating graphics pipeline...\n");
     SS_ERROR_CHECK(temp, _createGraphicsPipeline(ALIAS));
     SS_PRINT("\tCreating simulation pipeline...\n");
-
+    SS_ERROR_CHECK(temp, _createSimulationPipeline(ALIAS));
 
     SS_PRINT("SsInstance created\n\n");
 #undef ALIAS
@@ -860,6 +892,8 @@ void ssDestroyInstance(SsInstance instance) {
 
     SS_PRINT("\tDestroying graphics pipeline...\n");
     vkDestroyPipeline(instance->vulkanCore.device, instance->rendering.pipeline, NULL);
+    SS_PRINT("\tDestroying simulation pipeline...\n");
+    vkDestroyPipeline(instance->vulkanCore.device, instance->simulationCommons.pipeline, NULL);
 
     SS_PRINT("\tDestroying pipeline layouts...\n");
     vkDestroyPipelineLayout(instance->vulkanCore.device, instance->rendering.pipelineLayout, NULL);
@@ -868,7 +902,7 @@ void ssDestroyInstance(SsInstance instance) {
     SS_PRINT("\tDestroying shaders...\n");
     vkDestroyShaderModule(instance->vulkanCore.device, instance->rendering.graphicsFrag, NULL);
     vkDestroyShaderModule(instance->vulkanCore.device, instance->rendering.graphicsVert, NULL);
-    //vkDestroyShaderModule(instance->vulkanCore.device, instance->rendering.graphicsFrag, NULL);
+    vkDestroyShaderModule(instance->vulkanCore.device, instance->simulationCommons.compute, NULL);
 
 
 
