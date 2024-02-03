@@ -8,6 +8,8 @@ typedef enum {
     SS_SIM_TYPE_POTENTIAL_WELL = 0
 } SsSimulationType;
 
+typedef struct SsSimulationSnapshot_s *SsSimulationSnapshot;
+
 typedef struct {
     //risoluzione della simulazione in quantita' di caselle nella griglia
     uint32_t resolution;
@@ -19,6 +21,8 @@ typedef struct {
     SsSimulationType type;
 
     SsBool hasFiltering;
+
+    uint32_t workgroupCount;
 } SsSimulationCreateInfo;
 
 //non passo l'istanza tra i parametri perche' sarebbe poco chiaro
@@ -37,5 +41,16 @@ SsResult ssUpdateSimulation(SsInstance instance, float deltaTime, SsSimulation s
 SsResult ssRenderSimulation(SsInstance instance, SsSimulation simulation);
 
 void ssDestroySimulation(SsInstance instance, SsSimulation simulation);
+
+typedef struct {
+    float real;
+    float complex;
+} SsSimulationCell;
+
+SsResult ssCreateSimulationSnapshot(SsInstance instance, SsSimulation simulation, SsSimulationSnapshot *snapshot);
+void ssDestroySimulationSnapshot(SsInstance instance, SsSimulationSnapshot snapshot);
+
+SsSimulationCell *ssSimulationSnapshotGetData(SsSimulationSnapshot snapshot);
+
 
 #endif

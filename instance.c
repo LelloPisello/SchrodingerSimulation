@@ -577,7 +577,7 @@ static SsResult _createDescriptorSetLayouts(SsInstance instance) {
 
     layoutInfo.bindingCount = 2;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     if(vkCreateDescriptorSetLayout(instance->vulkanCore.device, &layoutInfo, NULL, &instance->simulationCommons.descriptorLayout)) {
         return SS_ERROR_DESCRIPTOR_SET_LAYOUT_CREATION_FAILURE;

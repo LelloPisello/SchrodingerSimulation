@@ -1,0 +1,39 @@
+#version 460
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout (push_constant) uniform _constants {
+    float deltaTime;
+};
+
+layout(binding = 0, RG32F) uniform readonly image2D inputState;
+layout(binding = 1, RG32F) uniform writeonly image2D outputState;
+
+#define M_PI 3.1415926535897932384626433832795
+//fase della funzione d'onda
+//normalizzata 0..1 per renderizzare con hsv
+float phase(vec2 simState) {
+    return acos(simState.x / length(simState.xy));    
+}
+vec2 hash(vec2 seed) {
+    return 
+    vec2( 
+        fract(sin((sin(seed.x * 10) * 133 + seed.y * 33) * 98) * 100),
+        fract(sin((seed.x * 12 - 123 * cos(seed.y)) * 130 - 123) * 133)
+    );
+}
+
+void main() {
+    
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+
+    float lastPhase = phase(imageLoad(inputState, coord.xy).xy);
+    float newPhase = fract((lastPhase + deltaTime)/M_PI)*M_PI;
+
+    if(deltaTime <= 0) {
+        imageStore(outputState, coord, vec4(hash(vec2(coord)), 0, 0));   
+    } else {
+        imageStore(outputState, coord, vec4(cos(newPhase), sin(newPhase), 0, 0));
+    }
+
+}

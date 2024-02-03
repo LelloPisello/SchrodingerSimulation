@@ -23,7 +23,8 @@ int main() {
         SsSimulationCreateInfo simInfo = {
             .resolution = 256,
             .size = 1.0f,
-            .type = SS_SIM_TYPE_POTENTIAL_WELL
+            .type = SS_SIM_TYPE_POTENTIAL_WELL,
+            .workgroupCount = 256
         };
         if((temp = ssCreateSimulation(instance, &simInfo, &simulation))) {
             fprintf(stderr, "Failed to create simulation, error %u\n", (unsigned)temp);
@@ -31,7 +32,17 @@ int main() {
         }
     }
 
+    if((temp = ssUpdateSimulation(instance, -1, simulation))) {
+        fprintf(stderr, "Failed to update a simulation\n");
+        
+    }
+
     while(!ssInstanceShouldClose(instance)) {
+        
+        if((temp = ssUpdateSimulation(instance, 0.005, simulation))) {
+            fprintf(stderr, "Failed to update a simulation\n");
+            break;
+        }
         if((temp = ssRenderSimulation(instance, simulation))) {
             fprintf(stderr, "Failed to render a simulation, error code %u\n", (unsigned)temp);
             break;

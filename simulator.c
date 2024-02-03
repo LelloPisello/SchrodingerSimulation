@@ -8,9 +8,6 @@
 #include <vulkan/vulkan_core.h>
 
 
-//serve per poter creare piu simulazioni
-//non e' necessariamente globale ma in questo modo diminuisce il numero di push
-static VkFormat CHOSEN_IMAGE_FORMAT;
 
 
 struct SsSimulation_s {
@@ -27,12 +24,16 @@ struct SsSimulation_s {
     //di interpolare a scelta le simulazioni
     VkSampler imageSampler;
     
+    
+
     //per fare double buffering sulle immagini
     uint32_t lastImage;
     uint32_t resolution;
+    uint32_t workgroupCount;
     float size;
     SsSimulationType type;
     SsBool hasFiltering;
+    VkFence computeFinishedFence;
 };
 
 static void _updateRenderingDescriptor(SsInstance instance, SsSimulation simulation) {
@@ -205,9 +206,11 @@ static SsResult _transitionImageLayouts(SsInstance instance, SsSimulation simula
 }
 
 static SsResult _createSimulationImages(SsInstance instance, SsSimulation simulation) {
+    
     //non e' detto che l'implementazione supporti i float a 32 bit
     //nel caso fall back lungo la lista di preferenze
     static int float32Supported = -1;
+    /*
     //lista di preferenze sui formati, importa solo per la precisione
     //e non sprecare memoria
     static VkFormat preferredFormats[] = {
@@ -259,6 +262,22 @@ static SsResult _createSimulationImages(SsInstance instance, SsSimulation simula
                 break;
             }
         }
+    }*/
+    //format singolo
+    //con la lista di format preferti avrei dovuto avere una miriade
+    //di compute shader per fare in modo funzionassero tutti
+    if(float32Supported == -1) {
+        VkFormatProperties props;
+        vkGetPhysicalDeviceFormatProperties(instance->vulkanCore.chosenDevice, VK_FORMAT_R32G32_SFLOAT, &props);
+        if(props.linearTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT &&
+            props.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) {
+            float32Supported = 1;
+        } else {
+            float32Supported = 0;
+        }
+    }
+    if (float32Supported == 0) {
+        return SS_ERROR_IMAGE_CREATION_FAILURE;
     }
 
 
@@ -281,7 +300,7 @@ static SsResult _createSimulationImages(SsInstance instance, SsSimulation simula
         .tiling = VK_IMAGE_TILING_LINEAR,
         .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .format = CHOSEN_IMAGE_FORMAT
+        .format = VK_FORMAT_R32G32_SFLOAT
     };
     if(vkCreateImage(instance->vulkanCore.device, &imageInfo, NULL, &simulation->images[0]) ||
         vkCreateImage(instance->vulkanCore.device, &imageInfo, NULL, &simulation->images[1])) {
@@ -334,17 +353,28 @@ static SsResult _allocateImageMemory(SsInstance instance, SsSimulation simulatio
     return SS_SUCCESS;
 }
 
+static SsResult _createSimulationFence(SsInstance instance, SsSimulation simulation) {
+    VkFenceCreateInfo fenceInfo = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    };
+    if(vkCreateFence(instance->vulkanCore.device, &fenceInfo, NULL, &simulation->computeFinishedFence)) {
+        return SS_ERROR_SEMAPHORE_CREATION_FAILURE;
+    }
+    return SS_SUCCESS;
+}
+
 static SsResult _createImageViews(SsInstance instance, SsSimulation simulation) {
     VkImageViewCreateInfo viewInfo = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = simulation->images[0],
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = CHOSEN_IMAGE_FORMAT,
+        .format = VK_FORMAT_R32G32_SFLOAT,
         .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
         .subresourceRange.baseArrayLayer = 0,
         .subresourceRange.baseMipLevel = 0,
         .subresourceRange.layerCount = 1,
         .subresourceRange.levelCount = 1,
+        
     };
     if(vkCreateImageView(instance->vulkanCore.device, &viewInfo, NULL, &simulation->imageViews[0])) {
         return SS_ERROR_IMAGE_VIEW_CREATION_FAILURE;
@@ -359,8 +389,8 @@ static SsResult _createImageViews(SsInstance instance, SsSimulation simulation) 
 static SsResult _createImageSamplers(SsInstance instance, SsSimulation simulation) {
     VkSamplerCreateInfo samplerInfo = {
         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
         .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
         .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
         .anisotropyEnable = VK_FALSE,
@@ -369,7 +399,6 @@ static SsResult _createImageSamplers(SsInstance instance, SsSimulation simulatio
         .borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
         .compareEnable = VK_FALSE,
         .compareOp = VK_COMPARE_OP_ALWAYS,
-        
     };
 
     if(vkCreateSampler(instance->vulkanCore.device, &samplerInfo, NULL, &simulation->imageSampler)) {
@@ -382,7 +411,9 @@ static SsResult _createImageSamplers(SsInstance instance, SsSimulation simulatio
 SsResult ssCreateSimulation(SsInstance instance, const SsSimulationCreateInfo *info, SsSimulation *pSimulation) {
     if(!instance || !info || !pSimulation)
         return SS_ERROR_NULLPTR_PASSED;
-    
+    if(info->size <= 0 || info->resolution == 0 || info->workgroupCount == 0) {
+        return SS_ERROR_BAD_PARAMETER;
+    }
     SsResult temp;
 
     SS_PRINT("Creating SsSimulation:\n\tAllocating %lu bytes...\n", sizeof(struct SsSimulation_s));
@@ -393,7 +424,8 @@ SsResult ssCreateSimulation(SsInstance instance, const SsSimulationCreateInfo *i
     ALIAS->resolution = info->resolution;
     ALIAS->size = info->size;
     ALIAS->type = info->type;
-    ALIAS->hasFiltering = SS_TRUE;
+    ALIAS->hasFiltering = info->hasFiltering;
+    ALIAS->workgroupCount = info->workgroupCount;
 
     SS_PRINT("\tCreating simulation images...\n");
 
@@ -407,6 +439,9 @@ SsResult ssCreateSimulation(SsInstance instance, const SsSimulationCreateInfo *i
     SS_PRINT("\tTransitioning image for the first time...\n");
     SS_ERROR_CHECK(temp, _transitionImageLayouts(instance, ALIAS));
 
+    SS_PRINT("\tCreating simulation fence...\n");
+    SS_ERROR_CHECK(temp, _createSimulationFence(instance, ALIAS));
+
     SS_PRINT("SsSimulation created\n\n");
 #undef ALIAS
     return SS_SUCCESS;
@@ -415,6 +450,9 @@ SsResult ssCreateSimulation(SsInstance instance, const SsSimulationCreateInfo *i
 void ssDestroySimulation(SsInstance instance, SsSimulation simulation) {
     SS_PRINT("Destroying SsSimulation:\n\t");
     vkDeviceWaitIdle(instance->vulkanCore.device);
+
+    SS_PRINT("\tDestroying simulation fence...\n");
+    vkDestroyFence(instance->vulkanCore.device, simulation->computeFinishedFence, NULL);
 
     SS_PRINT("\tDestroying image sampler...\n");
     vkDestroySampler(instance->vulkanCore.device, simulation->imageSampler, NULL);
@@ -446,17 +484,93 @@ static void _writeSimulationDescriptor(SsInstance instance, SsSimulation simulat
 
     VkWriteDescriptorSet descriptorWrite = {
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
         .pImageInfo = imageInfo,
         .descriptorCount = 2,
-        .dstSet = instance->rendering.descriptor,
+        .dstSet = instance->simulationCommons.descriptor,
     };
 
     vkUpdateDescriptorSets(instance->vulkanCore.device, 1, &descriptorWrite, 0, NULL);
 
 }
 
+static SsResult _recordSimulationCommand(SsInstance instance, float deltaTime, SsSimulation simulation) {
+    VkCommandBufferBeginInfo cmdBegin = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    };
+    if(vkBeginCommandBuffer(instance->simulationCommons.command, &cmdBegin)) {
+        return SS_ERROR_COMMAND_BUFFER_RECORDING_FAILURE;
+    }
+    
+
+    vkCmdBindPipeline(instance->simulationCommons.command, VK_PIPELINE_BIND_POINT_COMPUTE, instance->simulationCommons.pipeline);
+    vkCmdBindDescriptorSets(instance->simulationCommons.command, VK_PIPELINE_BIND_POINT_COMPUTE, instance->simulationCommons.pipelineLayout, 
+    0, 1, &instance->simulationCommons.descriptor, 0, NULL);
+
+    SsPushConstants pushConstant = {
+        .deltaTime = deltaTime
+    };
+
+
+    VkImageMemoryBarrier imagebarrier = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .image = simulation->images[!simulation->lastImage],
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+        .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+        .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseArrayLayer = 0,
+            .baseMipLevel = 0,
+            .layerCount = 1,
+            .levelCount = 1
+        }
+    };
+        
+    vkCmdPipelineBarrier(instance->simulationCommons.command, 
+    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+    0, 0, NULL, 0, NULL, 
+    1, &imagebarrier);
+
+    vkCmdPushConstants(instance->simulationCommons.command, instance->simulationCommons.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SsPushConstants), &pushConstant);
+    vkCmdDispatch(instance->simulationCommons.command, simulation->workgroupCount, 
+        simulation->workgroupCount, 1);
+    
+    imagebarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    imagebarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(instance->simulationCommons.command, 
+    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+    0, 0, NULL, 0, NULL, 
+    1, &imagebarrier);
+
+    if(vkEndCommandBuffer(instance->simulationCommons.command)) {
+        return SS_ERROR_COMMAND_BUFFER_RECORDING_FAILURE;
+    }
+
+    return SS_SUCCESS;
+}
+
 SsResult ssUpdateSimulation(SsInstance instance, float deltaTime, SsSimulation simulation) {
     _writeSimulationDescriptor(instance, simulation);
+    simulation->lastImage = !simulation->lastImage;
+    
+    SsResult temp;
+
+    vkResetCommandBuffer(instance->simulationCommons.command, 0);
+    SS_ERROR_CHECK(temp, _recordSimulationCommand(instance, deltaTime, simulation));
+
+    VkSubmitInfo submit = {
+        .commandBufferCount = 1,
+        .pCommandBuffers = &instance->simulationCommons.command,
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO
+    };
+    if(vkQueueSubmit(instance->vulkanCore.queues[SS_QUEUE_FAMILY_COMPUTE], 1, &submit, simulation->computeFinishedFence)) {
+        return SS_ERROR_QUEUE_SUBMIT_FAILURE;
+    }
+    vkWaitForFences(instance->vulkanCore.device, 1, &simulation->computeFinishedFence, VK_FALSE, UINT64_MAX);
+    vkResetFences(instance->vulkanCore.device, 1, &simulation->computeFinishedFence);
+
     return SS_SUCCESS;
 }
