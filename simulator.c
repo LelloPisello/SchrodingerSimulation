@@ -2,9 +2,11 @@
 #include "common.h"
 #include "internal_instance.h"
 #include "internal_common.h"
+#include <bits/time.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <vulkan/vulkan_core.h>
 
 
@@ -29,7 +31,6 @@ struct SsSimulation_s {
     //per fare double buffering sulle immagini
     uint32_t lastImage;
     uint32_t resolution;
-    uint32_t workgroupCount;
     float size;
     SsSimulationType type;
     SsBool hasFiltering;
@@ -293,7 +294,7 @@ static SsResult _createSimulationImages(SsInstance instance, SsSimulation simula
             (instance->vulkanCore.queueFamilies[SS_QUEUE_FAMILY_GRAPHICS] != instance->vulkanCore.queueFamilies[SS_QUEUE_FAMILY_COMPUTE]) + 1,
         .pQueueFamilyIndices = queueFamilies,
         .arrayLayers = 1,
-        .extent = {simulation->size, simulation->size, 1},
+        .extent = {simulation->resolution, simulation->resolution, 1},
         .mipLevels = 1,
         .sharingMode = (instance->vulkanCore.queueFamilies[SS_QUEUE_FAMILY_GRAPHICS] != instance->vulkanCore.queueFamilies[SS_QUEUE_FAMILY_COMPUTE]) ?
             VK_SHARING_MODE_CONCURRENT : VK_SHARING_MODE_EXCLUSIVE,
@@ -411,7 +412,7 @@ static SsResult _createImageSamplers(SsInstance instance, SsSimulation simulatio
 SsResult ssCreateSimulation(SsInstance instance, const SsSimulationCreateInfo *info, SsSimulation *pSimulation) {
     if(!instance || !info || !pSimulation)
         return SS_ERROR_NULLPTR_PASSED;
-    if(info->size <= 0 || info->resolution == 0 || info->workgroupCount == 0) {
+    if(info->size <= 0 || info->resolution == 0) {
         return SS_ERROR_BAD_PARAMETER;
     }
     SsResult temp;
@@ -425,7 +426,6 @@ SsResult ssCreateSimulation(SsInstance instance, const SsSimulationCreateInfo *i
     ALIAS->size = info->size;
     ALIAS->type = info->type;
     ALIAS->hasFiltering = info->hasFiltering;
-    ALIAS->workgroupCount = info->workgroupCount;
 
     SS_PRINT("\tCreating simulation images...\n");
 
@@ -508,7 +508,8 @@ static SsResult _recordSimulationCommand(SsInstance instance, float deltaTime, S
     0, 1, &instance->simulationCommons.descriptor, 0, NULL);
 
     SsPushConstants pushConstant = {
-        .deltaTime = deltaTime
+        .deltaTime = deltaTime,
+        .scale = simulation->size
     };
 
 
@@ -534,8 +535,8 @@ static SsResult _recordSimulationCommand(SsInstance instance, float deltaTime, S
     1, &imagebarrier);
 
     vkCmdPushConstants(instance->simulationCommons.command, instance->simulationCommons.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SsPushConstants), &pushConstant);
-    vkCmdDispatch(instance->simulationCommons.command, simulation->workgroupCount, 
-        simulation->workgroupCount, 1);
+    vkCmdDispatch(instance->simulationCommons.command, simulation->resolution / 4, 
+        simulation->resolution / 4, 1);
     
     imagebarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     imagebarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -552,10 +553,34 @@ static SsResult _recordSimulationCommand(SsInstance instance, float deltaTime, S
     return SS_SUCCESS;
 }
 
+static float _internalDeltaTime() {
+    float result;
+#ifdef linux
+    static struct timespec lastTime = {}, newTime;
+    if(!lastTime.tv_sec) {
+        clock_gettime(CLOCK_REALTIME, &lastTime);
+    }
+    clock_gettime(CLOCK_REALTIME, &newTime);
+    result = (newTime.tv_sec - lastTime.tv_sec) + (newTime.tv_nsec - lastTime.tv_nsec) * 0.000000001f;
+#else
+    static float lastTime = -1, newTime;
+    if(lastTime < 0)
+        lastTime = glfwGetTime();
+    newTime = glfwGetTime();
+    result = newTime - lastTime;
+#endif
+    lastTime = newTime;
+    return result;
+}
+
 SsResult ssUpdateSimulation(SsInstance instance, float deltaTime, SsSimulation simulation) {
     _writeSimulationDescriptor(instance, simulation);
     simulation->lastImage = !simulation->lastImage;
     
+    if(deltaTime < 0 && deltaTime > -1.5f) {
+        deltaTime = _internalDeltaTime();
+    }
+
     SsResult temp;
 
     vkResetCommandBuffer(instance->simulationCommons.command, 0);

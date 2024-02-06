@@ -1,39 +1,71 @@
 #version 460
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+#define HBAR 
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 1) in;
 
 layout (push_constant) uniform _constants {
     float deltaTime;
+    float scale;
 };
 
 layout(binding = 0, RG32F) uniform readonly image2D inputState;
 layout(binding = 1, RG32F) uniform writeonly image2D outputState;
+#define GRIDSTEP (scale / imageSize(inputState).x)
 
-#define M_PI 3.1415926535897932384626433832795
-//fase della funzione d'onda
-//normalizzata 0..1 per renderizzare con hsv
-float phase(vec2 simState) {
-    return acos(simState.x / length(simState.xy));    
-}
-vec2 hash(vec2 seed) {
-    return 
-    vec2( 
-        fract(sin((sin(seed.x * 10) * 133 + seed.y * 33) * 98) * 100),
-        fract(sin((seed.x * 12 - 123 * cos(seed.y)) * 130 - 123) * 133)
+//operatore di laplace (nabla prodotto scalare nabla) *
+//d2S/dx2 + d2S/dy2
+vec2 laplacian(vec2 state, ivec2 coord) {
+    vec2 xP = (
+        imageLoad(inputState, ivec2(coord.x + 1, coord.y)).xy
     );
+    vec2 xM =  (
+        imageLoad(inputState, ivec2(coord.x - 1, coord.y)).xy
+    );
+    vec2 yP = (
+        imageLoad(inputState, ivec2(coord.x, coord.y + 1)).xy
+    );
+    vec2 yM =  (
+        imageLoad(inputState, ivec2(coord.x, coord.y - 1)).xy
+    );
+    
+    return (xP + xM + yP + yM - 4.0 * state) / (GRIDSTEP * GRIDSTEP);
+    
+
+}
+
+float potentialF(ivec2 size, ivec2 coord) {
+    if(coord.x <= 1 || coord.x + 1 >= size.x) {
+        return 1;
+    }
+    if(coord.y <= 1 || coord.y + 1 >= size.y) {
+        return 1;
+    }
+    if(length(coord - size / 2.0) < 20) 
+        return 1;
+    return 0;
+}
+
+vec2 initialState(ivec2 coord, ivec2 size) {
+    if(coord.x > 82 && coord.x < 86 && coord.y < 156 && coord.y > 152) 
+        return vec2(4, 0);
+    return vec2(0);
 }
 
 void main() {
     
     ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
-
-    float lastPhase = phase(imageLoad(inputState, coord.xy).xy);
-    float newPhase = fract((lastPhase + deltaTime)/M_PI)*M_PI;
+    ivec2 size = imageSize(inputState);
+    vec2 currentState = imageLoad(inputState, coord).xy;
+    
+    vec2 kinetic = laplacian(currentState, coord);
+    vec2 potential = potentialF(size, coord) * currentState;
+    vec2 change = vec2(potential.y - kinetic.y, kinetic.x - potential.x) ;
 
     if(deltaTime <= 0) {
-        imageStore(outputState, coord, vec4(hash(vec2(coord)), 0, 0));   
+        imageStore(outputState, coord, vec4(initialState(coord, size), 0, 0));   
     } else {
-        imageStore(outputState, coord, vec4(cos(newPhase), sin(newPhase), 0, 0));
+        imageStore(outputState, coord, vec4(currentState + change * deltaTime, 0, 0));
     }
 
 }

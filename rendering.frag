@@ -12,7 +12,11 @@ layout (location = 0) out vec4 outColor;
 //fase della funzione d'onda
 //normalizzata 0..1 per renderizzare con hsv
 float phase(vec4 simState) {
-    return acos(simState.x / length(simState)) / M_PI;    
+    if(simState.x == 0 && simState.y > 0)
+        return M_PI / 2;
+    if(simState.x == 0 && simState.y < 0)
+        return -M_PI / 2;
+    return atan(simState.y / simState.x) + (simState.x < 0 ? M_PI : 0); 
 }
 
 //ampiezza della funzione d'onda
@@ -36,7 +40,7 @@ vec3 HSVtoRGB(vec3 hsv) {
 
 void main() {
     vec4 simState = texture(simulationImage, UV);
-    outColor = vec4(HSVtoRGB(vec3(phase(simState), 1.0, amplitude(simState))), 1.0);
+    outColor = vec4(HSVtoRGB(vec3(phase(simState) * 0.5 / M_PI, 0.8, min(amplitude(simState), 1.0))), 1.0);
     //outColor = vec4(UV, 0, 1);
     //outColor = vec4(vec3(length(hash(UV))) * vec3(1.0 / length(vec3(1))), 1);
 }

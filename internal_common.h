@@ -9,6 +9,7 @@
 //necessario per varie ragioni
 typedef struct {
     float deltaTime;
+    float scale;
 } SsPushConstants;
 
 SsResult ssBeginSingleTimeCommand(SsInstance instance, SsInstanceQueueFamilies role, VkCommandBuffer *cmd);

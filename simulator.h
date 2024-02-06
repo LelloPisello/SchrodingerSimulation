@@ -22,7 +22,6 @@ typedef struct {
 
     SsBool hasFiltering;
 
-    uint32_t workgroupCount;
 } SsSimulationCreateInfo;
 
 //non passo l'istanza tra i parametri perche' sarebbe poco chiaro
@@ -30,6 +29,7 @@ typedef struct {
 SsResult ssCreateSimulation(SsInstance instance, const SsSimulationCreateInfo* pInfo, SsSimulation* pSimulation);
 
 #define SS_DELTA_TIME_AUTO -1.f
+#define SS_DELTA_TIME_INIT -2.f
 
 //il deltaTime puo essere SS_DELTA_TIME_AUTO o negativo, in entrambi i casi il motore usa una sua 
 //funzione deltaTime
