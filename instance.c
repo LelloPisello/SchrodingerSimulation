@@ -143,6 +143,7 @@ static SsResult _createWindowAndSurface(const SsInstanceCreateInfo* args, SsInst
     return SS_SUCCESS;
 }
 
+
 static SsResult _createVkDevice(SsInstance instance) {
 
     uint32_t uniqueQueueFamilyCount = 1;
@@ -202,7 +203,7 @@ static SsResult _createVkDevice(SsInstance instance) {
 
     const uint32_t deviceExtensionCount = 1;
     const char* deviceExtensions[] = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     };
 
     //controllo sia supportata la swapchain

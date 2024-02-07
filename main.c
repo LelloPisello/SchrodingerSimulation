@@ -22,9 +22,9 @@ int main() {
     {
         SsSimulationCreateInfo simInfo = {
             .resolution = 256,
-            .size = 256.0f,
-            .type = SS_SIM_TYPE_POTENTIAL_WELL,
-            .hasFiltering = SS_FALSE,
+            .scale = 256.0f,
+            .potentialMapType = SS_SIMULATION_POTENTIAL_HYDROGEN_ATOM,
+            .linearFiltering = SS_TRUE,
         };
         if((temp = ssCreateSimulation(instance, &simInfo, &simulation))) {
             fprintf(stderr, "Failed to create simulation, error %u\n", (unsigned)temp);

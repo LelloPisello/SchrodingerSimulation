@@ -10,37 +10,53 @@
 #include <vulkan/vulkan_core.h>
 
 
-
+//TODO: 
+//-passare a integrazione runge-kutta(4)
+//      quindi: 3 immagini extra (k1, k2, k3) (k4 calcolata sul momento)
+//-implementare snapshot simulazione
+//-implementare immagini come mappa del potenziale (scene personalizzate)
+//-implementare immagini distribuzione iniziale
+//-aggiungere filtering cubico se disponibile
 
 struct SsSimulation_s {
     //la simulazione avviene sulle immagini
     //al posto che sui buffer, per poterle poi disegnare meglio
-    VkDeviceMemory imageMemory[2];
-    VkImage images[2];
+    VkDeviceMemory waveMemory[2];
+    VkImage waveImages[2];
 
     //questi servono solo per il rendering
     VkFormat imageFormat;
-    VkImageView imageViews[2];
+    VkImageView waveImageViews[2];
     //uno basta, si puo applicare a qualiasi texture
     //volendo si poteva farne uno per istanza, ma toglieva la possibilita
     //di interpolare a scelta le simulazioni
-    VkSampler imageSampler;
+    VkSampler waveSampler;
     
-    
+    //immagine del potenziale
+    //il potenziale e' sempre filtrato linearmente
+    VkImage potentialImage;
+    VkImageView potentialImageView;
+    VkSampler potentialSampler;
+    VkDeviceMemory potentialMemory;
+
+    //la quarta e' calcolata nella fine
+    //tutte senza sampler perche' tanto la risoluzione e' uguale per tutte
+    VkImage rkImages[3];
+    VkImageView rkImageViews[3];
+    VkDeviceMemory rkMemory[3];
 
     //per fare double buffering sulle immagini
     uint32_t lastImage;
     uint32_t resolution;
     float size;
-    SsSimulationType type;
     SsBool hasFiltering;
     VkFence computeFinishedFence;
 };
 
 static void _updateRenderingDescriptor(SsInstance instance, SsSimulation simulation) {
     VkDescriptorImageInfo imageInfo = {
-        .sampler = simulation->imageSampler,
-        .imageView = simulation->imageViews[simulation->lastImage],
+        .sampler = simulation->waveSampler,
+        .imageView = simulation->waveImageViews[simulation->lastImage],
         .imageLayout = VK_IMAGE_LAYOUT_GENERAL
     };
 
@@ -177,7 +193,7 @@ static SsResult _transitionImageLayouts(SsInstance instance, SsSimulation simula
     VkImageMemoryBarrier barriers[2];
     barriers[0] = (VkImageMemoryBarrier){
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .image = simulation->images[0],
+        .image = simulation->waveImages[0],
         .newLayout = VK_IMAGE_LAYOUT_GENERAL,
 
         .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
@@ -192,7 +208,7 @@ static SsResult _transitionImageLayouts(SsInstance instance, SsSimulation simula
         
     };
     barriers[1] = barriers[0];
-    barriers[1].image = simulation->images[1];
+    barriers[1].image = simulation->waveImages[1];
     //barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     vkCmdPipelineBarrier(singleTime, 
@@ -211,65 +227,19 @@ static SsResult _createSimulationImages(SsInstance instance, SsSimulation simula
     //non e' detto che l'implementazione supporti i float a 32 bit
     //nel caso fall back lungo la lista di preferenze
     static int float32Supported = -1;
+    //formato per il potenziale, anche se non e' precisissimo fa niente
+    static int uint8supported = -1;
     /*
-    //lista di preferenze sui formati, importa solo per la precisione
-    //e non sprecare memoria
-    static VkFormat preferredFormats[] = {
-
-        VK_FORMAT_R32G32_SFLOAT,
-        VK_FORMAT_R32G32_UINT,
-
-        VK_FORMAT_R64G64_SFLOAT,
-        VK_FORMAT_R64G64_UINT,
-
-        VK_FORMAT_R16G16_SFLOAT,
-        VK_FORMAT_R16G16_UINT,
-
-        VK_FORMAT_R64G64B64_SFLOAT,
-        VK_FORMAT_R64G64B64_UINT,
-
-        VK_FORMAT_R32G32B32_SFLOAT,
-        VK_FORMAT_R32G32B32_UINT,
-
-        VK_FORMAT_R16G16B16_SFLOAT,
-        VK_FORMAT_R16G16B16_UINT,
-
-        VK_FORMAT_R8G8_UINT,
-        VK_FORMAT_R8G8_SNORM,
-
-        VK_FORMAT_R32G32B32A32_SFLOAT,
-        VK_FORMAT_R32G32B32A32_UINT,
-
-
-        VK_FORMAT_R64G64B64A64_SFLOAT,
-        VK_FORMAT_R64G64B64A64_UINT,
-
-
-        VK_FORMAT_R16G16B16A16_SFLOAT,
-        VK_FORMAT_R16G16B16A16_UINT,
-        
-    };
-    static uint32_t chosenFormat;
-
-    if(float32Supported == -1) {
-        VkFormatProperties props;
-        for(uint32_t i = 0; i < 3; ++i) {
-            vkGetPhysicalDeviceFormatProperties(instance->vulkanCore.chosenDevice, preferredFormats[i], &props);
-            if((props.linearTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) &&
-                (props.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
-                SS_PRINT("\tFirst time image creation: format chosen %c, index %u\n",
-                chosenFormat % 2 ? 'u' : 'f', chosenFormat);
-                CHOSEN_IMAGE_FORMAT = preferredFormats[i];
-                break;
-            }
-        }
     }*/
     //format singolo
     //con la lista di format preferti avrei dovuto avere una miriade
     //di compute shader per fare in modo funzionassero tutti
+
+    //sulle due variabili supported 1 == LINEAR, 2 == OPTIMAL da fare
     if(float32Supported == -1) {
         VkFormatProperties props;
         vkGetPhysicalDeviceFormatProperties(instance->vulkanCore.chosenDevice, VK_FORMAT_R32G32_SFLOAT, &props);
+        
         if(props.linearTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT &&
             props.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) {
             float32Supported = 1;
@@ -277,7 +247,17 @@ static SsResult _createSimulationImages(SsInstance instance, SsSimulation simula
             float32Supported = 0;
         }
     }
-    if (float32Supported == 0) {
+    if(uint8supported == -1) {
+        VkFormatProperties props;
+        vkGetPhysicalDeviceFormatProperties(instance->vulkanCore.chosenDevice, VK_FORMAT_R8_UINT, &props);
+        
+        if(props.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) {
+            uint8supported = 1;
+        } else {
+            uint8supported = 0;
+        }
+    }
+    if (float32Supported == 0 || uint8supported == 0) {
         return SS_ERROR_IMAGE_CREATION_FAILURE;
     }
 
@@ -299,12 +279,19 @@ static SsResult _createSimulationImages(SsInstance instance, SsSimulation simula
         .sharingMode = (instance->vulkanCore.queueFamilies[SS_QUEUE_FAMILY_GRAPHICS] != instance->vulkanCore.queueFamilies[SS_QUEUE_FAMILY_COMPUTE]) ?
             VK_SHARING_MODE_CONCURRENT : VK_SHARING_MODE_EXCLUSIVE,
         .tiling = VK_IMAGE_TILING_LINEAR,
-        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        //i due transfer sono per poter caricare e salvare snapshot
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .format = VK_FORMAT_R32G32_SFLOAT
     };
-    if(vkCreateImage(instance->vulkanCore.device, &imageInfo, NULL, &simulation->images[0]) ||
-        vkCreateImage(instance->vulkanCore.device, &imageInfo, NULL, &simulation->images[1])) {
+    if(vkCreateImage(instance->vulkanCore.device, &imageInfo, NULL, &simulation->waveImages[0]) ||
+        vkCreateImage(instance->vulkanCore.device, &imageInfo, NULL, &simulation->waveImages[1])) {
+        return SS_ERROR_IMAGE_CREATION_FAILURE;
+    }
+    //transfer dst per caricare l'immagine iniziale
+    imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imageInfo.format = VK_FORMAT_R8_UINT;
+    if(vkCreateImage(instance->vulkanCore.device, &imageInfo, NULL, &simulation->potentialImage)) {
         return SS_ERROR_IMAGE_CREATION_FAILURE;
     }
     return SS_SUCCESS;
@@ -313,43 +300,52 @@ static SsResult _createSimulationImages(SsInstance instance, SsSimulation simula
 static SsResult _allocateImageMemory(SsInstance instance, SsSimulation simulation) {
     //fare un ciclo doppio verrebbe smontato in istruzioni singole
     
-    VkMemoryRequirements req;
-    vkGetImageMemoryRequirements(instance->vulkanCore.device, simulation->images[0], &req);
+    VkMemoryRequirements waveReq;
+    VkMemoryRequirements potentialReq;
+    vkGetImageMemoryRequirements(instance->vulkanCore.device, simulation->potentialImage, &potentialReq);
+    vkGetImageMemoryRequirements(instance->vulkanCore.device, simulation->waveImages[0], &waveReq);
     
-    static uint32_t memoryTypeIndex = UINT32_MAX;
+    static uint32_t waveMemoryTypeIndex = UINT32_MAX / 2;
+    static uint32_t potentialMemoryTypeIndex = UINT32_MAX / 2;
 
     //non creo una funzione per il controllo dei tipi di memoria in quanto la alloco solo qua
-    if(memoryTypeIndex == UINT32_MAX) {
-        SS_PRINT("\tFirst time allocating image memory, finding memory type...\n");
-        VkPhysicalDeviceMemoryProperties memProps;
-        vkGetPhysicalDeviceMemoryProperties(instance->vulkanCore.chosenDevice, &memProps);
-        for(uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
-            if((req.memoryTypeBits & (1 << i)) && 
-                memProps.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
-                memoryTypeIndex = i;
-            }
-        }
-        if(memoryTypeIndex == UINT32_MAX) {
-            SS_PRINT("\tFailed to find a suitable memory type\n");
-            return SS_ERROR_MEMORY_TYPE_NOT_AVAILABLE;
-        }
+    if(waveMemoryTypeIndex == UINT32_MAX / 2) {
+        SS_PRINT("\tFirst time allocating wave image memory, finding memory type: ");
+        ssFindMemoryTypeIndex(instance, waveReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &waveMemoryTypeIndex);
+        
+        SS_PRINT("index %u chosen\n", waveMemoryTypeIndex);
+    }
+    if(potentialMemoryTypeIndex == UINT32_MAX / 2) {
+        SS_PRINT("\tFirst time allocating potential image memory, finding memory type: ");
+        ssFindMemoryTypeIndex(instance, potentialReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &potentialMemoryTypeIndex);
+        SS_PRINT("index %u chosen\n", potentialMemoryTypeIndex);
+    }
+    if(waveMemoryTypeIndex == UINT32_MAX || potentialMemoryTypeIndex == UINT32_MAX) {
+        SS_PRINT("\tA memory type was not available, quitting...\n");
+        return SS_ERROR_MEMORY_TYPE_NOT_AVAILABLE;
     }
 
     VkMemoryAllocateInfo memInfo = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .memoryTypeIndex = memoryTypeIndex,
-        .allocationSize = req.size,
+        .memoryTypeIndex = waveMemoryTypeIndex,
+        .allocationSize = waveReq.size,
     };
-    if(vkAllocateMemory(instance->vulkanCore.device, &memInfo, NULL, &simulation->imageMemory[0]) ||
-        vkAllocateMemory(instance->vulkanCore.device, &memInfo, NULL, &simulation->imageMemory[1])) {
+    if(vkAllocateMemory(instance->vulkanCore.device, &memInfo, NULL, &simulation->waveMemory[0]) ||
+        vkAllocateMemory(instance->vulkanCore.device, &memInfo, NULL, &simulation->waveMemory[1])) {
+        return SS_ERROR_MEMORY_ALLOCATION_FAILURE;
+    }
+    memInfo.memoryTypeIndex = potentialMemoryTypeIndex;
+    memInfo.allocationSize = potentialReq.size;
+    if(vkAllocateMemory(instance->vulkanCore.device, &memInfo, NULL, &simulation->potentialMemory)) {
         return SS_ERROR_MEMORY_ALLOCATION_FAILURE;
     }
 
     //potrei unire le due immagini in una se avessi voglia,
     //magari con VMA ma non e' un progetto sufficentemente serio per farlo
-    vkBindImageMemory(instance->vulkanCore.device, simulation->images[0], simulation->imageMemory[0], 0);
-    vkBindImageMemory(instance->vulkanCore.device, simulation->images[1], simulation->imageMemory[1], 0);
+    vkBindImageMemory(instance->vulkanCore.device, simulation->waveImages[0], simulation->waveMemory[0], 0);
+    vkBindImageMemory(instance->vulkanCore.device, simulation->waveImages[1], simulation->waveMemory[1], 0);
 
+    vkBindImageMemory(instance->vulkanCore.device, simulation->potentialImage, simulation->potentialMemory, 0);
 
     return SS_SUCCESS;
 }
@@ -367,7 +363,7 @@ static SsResult _createSimulationFence(SsInstance instance, SsSimulation simulat
 static SsResult _createImageViews(SsInstance instance, SsSimulation simulation) {
     VkImageViewCreateInfo viewInfo = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = simulation->images[0],
+        .image = simulation->waveImages[0],
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
         .format = VK_FORMAT_R32G32_SFLOAT,
         .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -377,11 +373,16 @@ static SsResult _createImageViews(SsInstance instance, SsSimulation simulation) 
         .subresourceRange.levelCount = 1,
         
     };
-    if(vkCreateImageView(instance->vulkanCore.device, &viewInfo, NULL, &simulation->imageViews[0])) {
+    if(vkCreateImageView(instance->vulkanCore.device, &viewInfo, NULL, &simulation->waveImageViews[0])) {
         return SS_ERROR_IMAGE_VIEW_CREATION_FAILURE;
     }
-    viewInfo.image = simulation->images[1];
-    if(vkCreateImageView(instance->vulkanCore.device, &viewInfo, NULL, &simulation->imageViews[1])) {
+    viewInfo.image = simulation->waveImages[1];
+    if(vkCreateImageView(instance->vulkanCore.device, &viewInfo, NULL, &simulation->waveImageViews[1])) {
+        return SS_ERROR_IMAGE_VIEW_CREATION_FAILURE;
+    }
+    viewInfo.format = VK_FORMAT_R8_UINT;
+    viewInfo.image = simulation->potentialImage;
+    if(vkCreateImageView(instance->vulkanCore.device, &viewInfo, NULL, &simulation->potentialImageView)) {
         return SS_ERROR_IMAGE_VIEW_CREATION_FAILURE;
     }
     return SS_SUCCESS;
@@ -397,12 +398,19 @@ static SsResult _createImageSamplers(SsInstance instance, SsSimulation simulatio
         .anisotropyEnable = VK_FALSE,
         .magFilter = simulation->hasFiltering ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
         .minFilter = simulation->hasFiltering ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
-        .borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+        .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
         .compareEnable = VK_FALSE,
         .compareOp = VK_COMPARE_OP_ALWAYS,
     };
 
-    if(vkCreateSampler(instance->vulkanCore.device, &samplerInfo, NULL, &simulation->imageSampler)) {
+    if(vkCreateSampler(instance->vulkanCore.device, &samplerInfo, NULL, &simulation->waveSampler)) {
+        return SS_ERROR_IMAGE_SAMPLER_CREATION_FAILURE;
+    }
+    //inutile tanto non viene usato il sampler nel compute shader
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    samplerInfo.magFilter = samplerInfo.minFilter = VK_FILTER_LINEAR;
+
+    if(vkCreateSampler(instance->vulkanCore.device, &samplerInfo, NULL, &simulation->potentialSampler)) {
         return SS_ERROR_IMAGE_SAMPLER_CREATION_FAILURE;
     }
 
@@ -412,7 +420,7 @@ static SsResult _createImageSamplers(SsInstance instance, SsSimulation simulatio
 SsResult ssCreateSimulation(SsInstance instance, const SsSimulationCreateInfo *info, SsSimulation *pSimulation) {
     if(!instance || !info || !pSimulation)
         return SS_ERROR_NULLPTR_PASSED;
-    if(info->size <= 0 || info->resolution == 0) {
+    if(info->scale <= 0 || info->resolution == 0) {
         return SS_ERROR_BAD_PARAMETER;
     }
     SsResult temp;
@@ -423,9 +431,8 @@ SsResult ssCreateSimulation(SsInstance instance, const SsSimulationCreateInfo *i
     ALIAS = malloc(sizeof(struct SsSimulation_s));
     ALIAS->lastImage = 0;
     ALIAS->resolution = info->resolution;
-    ALIAS->size = info->size;
-    ALIAS->type = info->type;
-    ALIAS->hasFiltering = info->hasFiltering;
+    ALIAS->size = info->scale;
+    ALIAS->hasFiltering = info->linearFiltering;
 
     SS_PRINT("\tCreating simulation images...\n");
 
@@ -455,18 +462,22 @@ void ssDestroySimulation(SsInstance instance, SsSimulation simulation) {
     vkDestroyFence(instance->vulkanCore.device, simulation->computeFinishedFence, NULL);
 
     SS_PRINT("\tDestroying image sampler...\n");
-    vkDestroySampler(instance->vulkanCore.device, simulation->imageSampler, NULL);
+    vkDestroySampler(instance->vulkanCore.device, simulation->waveSampler, NULL);
+    vkDestroySampler(instance->vulkanCore.device, simulation->potentialSampler, NULL);
 
     SS_PRINT("\tDestroying images...\n");
-    vkDestroyImageView(instance->vulkanCore.device, simulation->imageViews[0], NULL);
-    vkDestroyImageView(instance->vulkanCore.device, simulation->imageViews[1], NULL);
+    vkDestroyImageView(instance->vulkanCore.device, simulation->waveImageViews[0], NULL);
+    vkDestroyImageView(instance->vulkanCore.device, simulation->waveImageViews[1], NULL);
+    vkDestroyImageView(instance->vulkanCore.device, simulation->potentialImageView, NULL);
 
-    vkDestroyImage(instance->vulkanCore.device, simulation->images[0], NULL);
-    vkDestroyImage(instance->vulkanCore.device, simulation->images[1], NULL);
+    vkDestroyImage(instance->vulkanCore.device, simulation->potentialImage, NULL);
+    vkDestroyImage(instance->vulkanCore.device, simulation->waveImages[0], NULL);
+    vkDestroyImage(instance->vulkanCore.device, simulation->waveImages[1], NULL);
 
     SS_PRINT("\tDestroying image memory...\n");
-    vkFreeMemory(instance->vulkanCore.device, simulation->imageMemory[0], NULL);
-    vkFreeMemory(instance->vulkanCore.device, simulation->imageMemory[1], NULL);
+    vkFreeMemory(instance->vulkanCore.device, simulation->waveMemory[0], NULL);
+    vkFreeMemory(instance->vulkanCore.device, simulation->waveMemory[1], NULL);
+    vkFreeMemory(instance->vulkanCore.device, simulation->potentialMemory, NULL);
 
     SS_PRINT("SsSimulation destroyed\n\n");
     free(simulation);
@@ -475,12 +486,12 @@ void ssDestroySimulation(SsInstance instance, SsSimulation simulation) {
 static void _writeSimulationDescriptor(SsInstance instance, SsSimulation simulation) {
     VkDescriptorImageInfo imageInfo[2];
     imageInfo[0] = (VkDescriptorImageInfo){
-        .sampler = simulation->imageSampler,
-        .imageView = simulation->imageViews[simulation->lastImage],
+        .sampler = simulation->waveSampler,
+        .imageView = simulation->waveImageViews[simulation->lastImage],
         .imageLayout = VK_IMAGE_LAYOUT_GENERAL
     };
     imageInfo[1] = imageInfo[0];
-    imageInfo[1].imageView = simulation->imageViews[!simulation->lastImage];
+    imageInfo[1].imageView = simulation->waveImageViews[!simulation->lastImage];
 
     VkWriteDescriptorSet descriptorWrite = {
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -515,7 +526,7 @@ static SsResult _recordSimulationCommand(SsInstance instance, float deltaTime, S
 
     VkImageMemoryBarrier imagebarrier = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .image = simulation->images[!simulation->lastImage],
+        .image = simulation->waveImages[!simulation->lastImage],
         .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
         .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
         .newLayout = VK_IMAGE_LAYOUT_GENERAL,

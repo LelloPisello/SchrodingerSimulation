@@ -1,0 +1,61 @@
+#version 460
+
+layout (push_constant) uniform _constants {
+    float deltaTime;
+};  
+
+layout (binding = 0) sampler2D potentialSampler;
+layout (binding = 1) readonly image2D currentWavefunction;
+layout (binding = 2, RG32F) readonly image2D previousK;
+layout (binding = 3, RG32F) writeonly image2D nextK;
+
+#define GRIDSTEP (scale / imageSize(currentWavefunction).x)
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 1) in;
+
+//operatore di laplace (nabla prodotto scalare nabla) *
+//d2S/dx2 + d2S/dy2
+vec2 laplacian(ivec2 coord) {
+    vec2 xP = (
+        imageLoad(currentWavefunction, ivec2(coord.x + 1, coord.y)).xy + deltaTime * imageLoad(previousK, ivec2(coord.x + 1, coord.y)).xy
+    );
+    vec2 xM =  (
+        imageLoad(currentWavefunction, ivec2(coord.x - 1, coord.y)).xy + deltaTime * imageLoad(previousK, ivec2(coord.x - 1, coord.y)).xy
+    );
+    vec2 yP = (
+        imageLoad(currentWavefunction, ivec2(coord.x, coord.y + 1)).xy + deltaTime * imageLoad(previousK, ivec2(coord.x, coord.y + 1)).xy
+    );
+    vec2 yM =  (
+        imageLoad(currentWavefunction, ivec2(coord.x, coord.y - 1)).xy + deltaTime * imageLoad(previousK, ivec2(coord.x, coord.y - 1)).xy
+    );
+    
+    return (xP + xM + yP + yM - 4.0 * imageLoad(currentWavefunction, coord).xy) / (GRIDSTEP * GRIDSTEP);
+    
+
+}
+
+float potentialF(ivec2 size, ivec2 coord) {
+    if(coord.x <= 1 || coord.x + 1 >= size.x) {
+        return 1;
+    }
+    if(coord.y <= 1 || coord.y + 1 >= size.y) {
+        return 1;
+    }
+    if(length(coord - size / 2.0) < 20) 
+        return 1;
+    return 0;
+}
+
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(currentWavefunction);
+
+    vec2 kinetic = laplacian(coord);
+    vec2 potential = potentialF(size, coord) * imageLoad(currentWavefunction, coord).xy;
+
+    vec2 result = vec2(potential.y - kinetic.y, kinetic.x - potential.x);
+
+    imageStore(nextK, coord, vec4(result, 0, 0));
+
+}

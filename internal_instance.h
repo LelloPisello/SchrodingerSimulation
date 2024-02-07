@@ -2,6 +2,7 @@
 #define INT_INS_h_
 
 //file esclusivamente ad uso interno che permette l'accesso ai dati interni delle istanze SS
+#include "common.h"
 #include "instance.h"
 #include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
@@ -81,6 +82,7 @@ struct SsInstance_s {
         VkDescriptorSetLayout descriptorLayout;
         VkDescriptorSet descriptor;        
     } simulationCommons;
+
 };
 
 #endif

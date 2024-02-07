@@ -14,5 +14,6 @@ typedef struct {
 
 SsResult ssBeginSingleTimeCommand(SsInstance instance, SsInstanceQueueFamilies role, VkCommandBuffer *cmd);
 SsResult ssEndSingleTimeCommand(SsInstance instance, SsInstanceQueueFamilies role, VkCommandBuffer cmd);
+SsResult ssFindMemoryTypeIndex(SsInstance instance, uint32_t memoryTypeBits, VkMemoryPropertyFlags memoryProperty, uint32_t *index);
 
 #endif

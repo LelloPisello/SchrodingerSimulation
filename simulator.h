@@ -4,23 +4,31 @@
 //#include "instance.h"
 //SsResult ssCreateSimulation
 
-typedef enum {
-    SS_SIM_TYPE_POTENTIAL_WELL = 0
-} SsSimulationType;
-
 typedef struct SsSimulationSnapshot_s *SsSimulationSnapshot;
+
+typedef enum {
+    SS_SIMULATION_POTENTIAL_HYDROGEN_ATOM = 1,
+    SS_SIMULATION_POTENTIAL_CUSTOM_FILE = 0,
+    SS_SIMULATION_POTENTIAL_ZERO = 2,
+    SS_SIMULATION_POTENTIAL_LATTICE = 3,
+} SsSimulationPotentialType;
 
 typedef struct {
     //risoluzione della simulazione in quantita' di caselle nella griglia
     uint32_t resolution;
     
     //dimensione della simulazione
-    float size;
+    float scale;
 
-    //tipo di potenziale nella simulazione
-    SsSimulationType type;
+    
 
-    SsBool hasFiltering;
+    SsBool linearFiltering;
+
+    //opzionale
+    //se NULL SS_POTENTIAL_ZERO viene usato
+    SsSimulationPotentialType potentialMapType;
+    //usato solo se potentialType == SS_SIMULATION_POTENTIAL_CUSTOM_FILE
+    const char* pPotentialFilename;
 
 } SsSimulationCreateInfo;
 
