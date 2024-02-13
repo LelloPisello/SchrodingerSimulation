@@ -1,6 +1,7 @@
 #include "simulator.h"
 #include "common.h"
 #include "internal_instance.h"
+#include "internal_simulation.h"
 #include "internal_common.h"
 #include <bits/time.h>
 #include <stdint.h>
@@ -17,41 +18,6 @@
 //-implementare immagini come mappa del potenziale (scene personalizzate)
 //-implementare immagini distribuzione iniziale
 //-aggiungere filtering cubico se disponibile
-
-struct SsSimulation_s {
-    //la simulazione avviene sulle immagini
-    //al posto che sui buffer, per poterle poi disegnare meglio
-    VkDeviceMemory waveMemory[2];
-    VkImage waveImages[2];
-
-    //questi servono solo per il rendering
-    VkFormat imageFormat;
-    VkImageView waveImageViews[2];
-    //uno basta, si puo applicare a qualiasi texture
-    //volendo si poteva farne uno per istanza, ma toglieva la possibilita
-    //di interpolare a scelta le simulazioni
-    VkSampler waveSampler;
-    
-    //immagine del potenziale
-    //il potenziale e' sempre filtrato linearmente
-    VkImage potentialImage;
-    VkImageView potentialImageView;
-    VkSampler potentialSampler;
-    VkDeviceMemory potentialMemory;
-
-    //la quarta e' calcolata nella fine
-    //tutte senza sampler perche' tanto la risoluzione e' uguale per tutte
-    VkImage rkImages[3];
-    VkImageView rkImageViews[3];
-    VkDeviceMemory rkMemory[3];
-
-    //per fare double buffering sulle immagini
-    uint32_t lastImage;
-    uint32_t resolution;
-    float size;
-    SsBool hasFiltering;
-    VkFence computeFinishedFence;
-};
 
 static void _updateRenderingDescriptor(SsInstance instance, SsSimulation simulation) {
     VkDescriptorImageInfo imageInfo = {
@@ -167,59 +133,25 @@ SsResult ssRenderSimulation(SsInstance instance, SsSimulation simulation) {
 }
 
 static SsResult _transitionImageLayouts(SsInstance instance, SsSimulation simulation) {
-    VkCommandBuffer singleTime;
-    ssBeginSingleTimeCommand(instance, SS_QUEUE_FAMILY_GRAPHICS, &singleTime);
+    SsResult temp;
+    SS_ERROR_CHECK(temp, ssTransitionImageLayout(instance, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, simulation->waveImages[0]));
+    SS_ERROR_CHECK(temp, ssTransitionImageLayout(instance, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, simulation->waveImages[1]));
+    
 
-    /*
-    VkImageMemoryBarrier barrier = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .image = simulation->images[!simulation->lastImage],
-        .newLayout = isCompute ? VK_IMAGE_LAYOUT_GENERAL :
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-
-        .oldLayout = firstTime ? (firstTime = 0, VK_IMAGE_LAYOUT_UNDEFINED) :
-            !isCompute ?  VK_IMAGE_LAYOUT_GENERAL :
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-        .subresourceRange.baseArrayLayer = 0,
-        .subresourceRange.baseMipLevel = 0,
-        .subresourceRange.levelCount = 1,
-        .subresourceRange.layerCount = 1,
-        
-    };*/
-    VkImageMemoryBarrier barriers[2];
-    barriers[0] = (VkImageMemoryBarrier){
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .image = simulation->waveImages[0],
-        .newLayout = VK_IMAGE_LAYOUT_GENERAL,
-
-        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-        .subresourceRange.baseArrayLayer = 0,
-        .subresourceRange.baseMipLevel = 0,
-        .subresourceRange.levelCount = 1,
-        .subresourceRange.layerCount = 1,
-        
-    };
-    barriers[1] = barriers[0];
-    barriers[1].image = simulation->waveImages[1];
-    //barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    vkCmdPipelineBarrier(singleTime, 
-    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-    0, 
-    0, NULL, 
-    0, NULL, 
-    2, barriers);
-
-    ssEndSingleTimeCommand(instance, SS_QUEUE_FAMILY_GRAPHICS, singleTime);
     return SS_SUCCESS;
+}
+
+static SsResult _fillPotentialImage(SsInstance instance, SsSimulation simulation) {
+    SsResult temp;
+    SS_ERROR_CHECK(temp, ssTransitionImageLayout(instance, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, simulation->potentialImage));
+    
+    VkBuffer stagingBuffer;
+    
+
+    SS_ERROR_CHECK(temp, ssTransitionImageLayout(instance, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, simulation->potentialImage));
+    
+
+    return SS_SUCCESS;   
 }
 
 static SsResult _createSimulationImages(SsInstance instance, SsSimulation simulation) {
@@ -310,18 +242,18 @@ static SsResult _allocateImageMemory(SsInstance instance, SsSimulation simulatio
 
     //non creo una funzione per il controllo dei tipi di memoria in quanto la alloco solo qua
     if(waveMemoryTypeIndex == UINT32_MAX / 2) {
-        SS_PRINT("\tFirst time allocating wave image memory, finding memory type: ");
+        SS_PRINT("\t\tFirst time allocating wave image memory, finding memory type: ");
         ssFindMemoryTypeIndex(instance, waveReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &waveMemoryTypeIndex);
         
         SS_PRINT("index %u chosen\n", waveMemoryTypeIndex);
     }
     if(potentialMemoryTypeIndex == UINT32_MAX / 2) {
-        SS_PRINT("\tFirst time allocating potential image memory, finding memory type: ");
+        SS_PRINT("\t\tFirst time allocating potential image memory, finding memory type: ");
         ssFindMemoryTypeIndex(instance, potentialReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &potentialMemoryTypeIndex);
         SS_PRINT("index %u chosen\n", potentialMemoryTypeIndex);
     }
     if(waveMemoryTypeIndex == UINT32_MAX || potentialMemoryTypeIndex == UINT32_MAX) {
-        SS_PRINT("\tA memory type was not available, quitting...\n");
+        SS_PRINT("\t\tA memory type was not available, quitting...\n");
         return SS_ERROR_MEMORY_TYPE_NOT_AVAILABLE;
     }
 
@@ -416,6 +348,8 @@ static SsResult _createImageSamplers(SsInstance instance, SsSimulation simulatio
 
     return SS_SUCCESS;
 }
+
+
 
 SsResult ssCreateSimulation(SsInstance instance, const SsSimulationCreateInfo *info, SsSimulation *pSimulation) {
     if(!instance || !info || !pSimulation)

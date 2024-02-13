@@ -2,6 +2,7 @@
 #include "common.h"
 #include "instance.h"
 #include "simulator.h"
+#include "snapshot.h"
 
 int main() {
     ssInit();
@@ -32,6 +33,14 @@ int main() {
         }
     }
 
+    SsSnapshot snapshot;
+    if((temp = ssCreateSnapshot(instance, simulation, &snapshot))) {
+        fprintf(stderr, "Failed to create snapshot, error %u\n", (unsigned)temp);
+        return 1;
+    }
+
+    
+
     if((temp = ssUpdateSimulation(instance, SS_DELTA_TIME_INIT, simulation))) {
         fprintf(stderr, "Failed to update a simulation\n");
         
@@ -51,6 +60,7 @@ int main() {
         }
     }
 
+    ssDestroySnapshot(instance, snapshot);
     ssDestroySimulation(instance, simulation);
     ssDestroyInstance(instance);
     ssTerminate();

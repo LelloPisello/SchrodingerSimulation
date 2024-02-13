@@ -36,6 +36,10 @@ typedef struct SsInstance_s *SsInstance;
 //due immagini (R parte reale funzione G parte complessa)
 typedef struct SsSimulation_s *SsSimulation;
 
+//uno snapshot della simulazione:
+//immagine trasferita dalla simulaione in un istante qulasias
+//puo anche essere caricata nella simulazione come stato iniziale
+typedef struct SsSnapshot_s *SsSnapshot;
 
 //la simulazione viene renderizzata "su" un istanza con un quad a schermo intero
 //usando la fase come hue e la ampiezza come value (HSV)
@@ -87,6 +91,9 @@ typedef enum {
     SS_ERROR_PIPELINE_LAYOUT_CREATION_FAILURE = 152,
     SS_ERROR_SHADER_MODULE_CREATION_FAILURE = 153,
     SS_ERROR_PIPELINE_CREATION_FAILURE = 154,
+    SS_ERROR_BUFFER_CREATION_FAILURE = 155,
+    SS_ERROR_MEMORY_MAP_FAILURE = 156,
+    
 
     //errori di creazione
     SS_ERROR_CREATION_ERROR_BIT = 256,

@@ -106,7 +106,7 @@ static SsResult _getQueueFamilies(SsInstance instance) {
             currentQueues++;
             instance->vulkanCore.queueFamilies[SS_QUEUE_FAMILY_GRAPHICS] = i;
         }
-        if(queueFamilyProperties[i].queueFlags & VK_QUEUE_COMPUTE_BIT &&
+        if(queueFamilyProperties[i].queueFlags & VK_QUEUE_COMPUTE_BIT && queueFamilyProperties[i].queueFlags & VK_QUEUE_TRANSFER_BIT &&
             queueFamilyProperties[i].queueCount > currentQueues) {
             currentQueues++;
             instance->vulkanCore.queueFamilies[SS_QUEUE_FAMILY_COMPUTE] = i;
@@ -343,12 +343,11 @@ static SsResult _createVkSwapchain(SsInstance instance) {
     SS_ERROR_CHECK(temp, _chooseVkSwapchainPresentMode(instance));
     _chooseVkSwapchainExtent(&caps, instance);
     
-    //uso una soluzione per avere vsync e allo stesso tempo essere sempre in operazione di tipo triple buffer
-    //se 3 e' meno del numero minimo di immagini per una swapchain allora uso il numero minimo (solitamente 2)
-    instance->window.swapchainImageCount = SS_MAX(caps.minImageCount, 3);
+    instance->window.swapchainImageCount = SS_MAX(caps.minImageCount, 2);
     //nel caso l'implementazione non supporta 3 immagini perche' sono troppe faccio un fall back al numero massimo di immagini
     instance->window.swapchainImageCount = SS_MIN(instance->window.swapchainImageCount, caps.maxImageCount);
 
+    SS_PRINT("\t\tSwapchain has %u images\n", instance->window.swapchainImageCount);
 
     VkSwapchainCreateInfoKHR swapchainInfo = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,

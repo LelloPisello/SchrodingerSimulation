@@ -1,6 +1,6 @@
-bin/ss: bin/common.o bin/instance.o bin/simulator.o main.c
+bin/ss: bin/common.o bin/instance.o bin/simulator.o bin/snapshot.o main.c
 	@echo "compiling main executable..."
-	@clang  -o bin/ss bin/instance.o bin/simulator.o bin/common.o main.c -lvulkan -lglfw -Wall
+	@clang  -o bin/ss bin/instance.o bin/simulator.o bin/common.o bin/snapshot.o main.c -lvulkan -lglfw -Wall
 
 bin/common.o: common.c
 	@echo "compiling common object file..."
@@ -12,7 +12,11 @@ bin/simulator.o: simulator.c
 
 bin/instance.o: instance.c
 	@echo "compiling instance object file..."
-	@clang -o bin/instance.o -c instance.c -Wall
+	@clang -o bin/instance.o -c instance.c -O2 -Wall
+
+bin/snapshot.o: snapshot.c
+	@echo "compiling snapshot object file..."
+	@clang -o bin/snapshot.o -c snapshot.c -O2 -Wall
 
 .PHONY: shaders frag vert comp
 

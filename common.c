@@ -94,3 +94,56 @@ SsResult ssFindMemoryTypeIndex(SsInstance instance, uint32_t memoryTypeBits, VkM
     }
     return SS_SUCCESS;  
 }
+
+SsResult ssTransitionImageLayout(SsInstance instance, VkImageLayout oldLayout, VkImageLayout newLayout, VkImage image) {
+    VkCommandBuffer singleTime;
+    SsResult temp;
+    SS_ERROR_CHECK(temp, ssBeginSingleTimeCommand(instance, SS_QUEUE_FAMILY_GRAPHICS, &singleTime));
+
+    /*
+    VkImageMemoryBarrier barrier = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .image = simulation->images[!simulation->lastImage],
+        .newLayout = isCompute ? VK_IMAGE_LAYOUT_GENERAL :
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+
+        .oldLayout = firstTime ? (firstTime = 0, VK_IMAGE_LAYOUT_UNDEFINED) :
+            !isCompute ?  VK_IMAGE_LAYOUT_GENERAL :
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .subresourceRange.baseArrayLayer = 0,
+        .subresourceRange.baseMipLevel = 0,
+        .subresourceRange.levelCount = 1,
+        .subresourceRange.layerCount = 1,
+        
+    };*/
+    VkImageMemoryBarrier barrier = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .image = image,
+        .newLayout = newLayout,
+
+        .oldLayout = oldLayout,
+
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .subresourceRange.baseArrayLayer = 0,
+        .subresourceRange.baseMipLevel = 0,
+        .subresourceRange.levelCount = 1,
+        .subresourceRange.layerCount = 1,
+        
+    };
+
+    vkCmdPipelineBarrier(singleTime, 
+    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+    0, 
+    0, NULL, 
+    0, NULL, 
+    1, &barrier);
+
+    SS_ERROR_CHECK(temp, ssEndSingleTimeCommand(instance, SS_QUEUE_FAMILY_GRAPHICS, singleTime));
+    return SS_SUCCESS;
+}

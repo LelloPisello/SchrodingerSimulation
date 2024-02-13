@@ -4,7 +4,6 @@
 //#include "instance.h"
 //SsResult ssCreateSimulation
 
-typedef struct SsSimulationSnapshot_s *SsSimulationSnapshot;
 
 typedef enum {
     SS_SIMULATION_POTENTIAL_HYDROGEN_ATOM = 1,
@@ -50,15 +49,6 @@ SsResult ssRenderSimulation(SsInstance instance, SsSimulation simulation);
 
 void ssDestroySimulation(SsInstance instance, SsSimulation simulation);
 
-typedef struct {
-    float real;
-    float complex;
-} SsSimulationCell;
-
-SsResult ssCreateSimulationSnapshot(SsInstance instance, SsSimulation simulation, SsSimulationSnapshot *snapshot);
-void ssDestroySimulationSnapshot(SsInstance instance, SsSimulationSnapshot snapshot);
-
-SsSimulationCell *ssSimulationSnapshotGetData(SsSimulationSnapshot snapshot);
 
 
 #endif
