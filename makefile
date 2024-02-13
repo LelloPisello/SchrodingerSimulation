@@ -1,6 +1,6 @@
 bin/ss: bin/common.o bin/instance.o bin/simulator.o bin/snapshot.o main.c
 	@echo "compiling main executable..."
-	@clang  -o bin/ss bin/instance.o bin/simulator.o bin/common.o bin/snapshot.o main.c -lvulkan -lglfw -Wall
+	@clang  -o bin/ss bin/instance.o bin/simulator.o bin/common.o bin/snapshot.o main.c -lvulkan -lglfw -lm -Wall
 
 bin/common.o: common.c
 	@echo "compiling common object file..."

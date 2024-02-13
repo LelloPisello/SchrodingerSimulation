@@ -6,6 +6,8 @@
 //uno snapshot deve essere per forza targettato da una immagine per una questione di dimensioni
 //potrebbe funzionare
 
+//per chi non sa se e' row o column major
+#define SS_2D_INDEX(x, y, resolution) (y * resolution + x)
 
 SsResult ssCreateSnapshot(SsInstance instance, SsSimulation simulation, SsSnapshot* snapshot);
 
