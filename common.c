@@ -75,7 +75,8 @@ SsResult ssEndSingleTimeCommand(SsInstance instance, SsInstanceQueueFamilies rol
     vkDestroyFence(instance->vulkanCore.device, tempFence, NULL);
     
 
-    vkFreeCommandBuffers(instance->vulkanCore.device, instance->rendering.commandPool, 1, &cmd);
+    vkFreeCommandBuffers(instance->vulkanCore.device, role == SS_QUEUE_FAMILY_COMPUTE ? instance->simulationCommons.commandPool : 
+        instance->rendering.commandPool, 1, &cmd);
     return SS_SUCCESS;
 }
 

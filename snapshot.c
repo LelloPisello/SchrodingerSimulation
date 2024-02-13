@@ -56,6 +56,9 @@ static SsResult _allocateSnapshotBufferMemory(SsInstance instance, SsSnapshot sn
     if(vkAllocateMemory(instance->vulkanCore.device, &memInfo, NULL, &snapshot->tempBufferMemory)) {
         return SS_ERROR_MEMORY_ALLOCATION_FAILURE;
     }
+    if(vkBindBufferMemory(instance->vulkanCore.device, snapshot->tempBuffer, snapshot->tempBufferMemory, 0)) {
+        return SS_ERROR_MEMORY_ALLOCATION_FAILURE;
+    }
 
     return SS_SUCCESS;
 }
@@ -106,4 +109,49 @@ void ssSnapshotUnmap(SsInstance instance, SsSnapshot snapshot) {
 
     vkUnmapMemory(instance->vulkanCore.device, snapshot->tempBufferMemory);
 
+}
+
+SsResult ssSnapshotGet(SsInstance instance, SsSimulation simulation, SsSnapshot snapshot) {
+    VkCommandBuffer singleTime;
+    ssBeginSingleTimeCommand(instance, SS_QUEUE_FAMILY_COMPUTE, &singleTime);
+
+    VkBufferImageCopy region = {
+        .imageExtent = {simulation->resolution, simulation->resolution, 1},
+        //.imageOffset = {},
+        .imageSubresource = {
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+            .mipLevel = 0
+        }
+    };
+
+    vkCmdCopyImageToBuffer(singleTime, simulation->waveImages[simulation->lastImage], 
+    VK_IMAGE_LAYOUT_GENERAL, snapshot->tempBuffer, 1, &region);
+
+    ssEndSingleTimeCommand(instance, SS_QUEUE_FAMILY_COMPUTE, singleTime);
+    return SS_SUCCESS;
+}
+
+SsResult ssSnapshotLoad(SsInstance instance, SsSimulation simulation, SsSnapshot snapshot) {
+    VkCommandBuffer singleTime;
+    ssBeginSingleTimeCommand(instance, SS_QUEUE_FAMILY_COMPUTE, &singleTime);
+
+    VkBufferImageCopy region = {
+        .imageExtent = {
+            simulation->resolution, simulation->resolution, 1
+        },
+        .imageSubresource = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+            .mipLevel = 0
+        }
+    };
+
+    vkCmdCopyBufferToImage(singleTime, snapshot->tempBuffer, simulation->waveImages[simulation->lastImage], VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+
+    ssEndSingleTimeCommand(instance, SS_QUEUE_FAMILY_COMPUTE, singleTime);
+
+    return SS_SUCCESS;
 }

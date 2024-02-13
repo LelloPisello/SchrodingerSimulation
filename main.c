@@ -46,6 +46,13 @@ int main() {
         
     }
 
+    if((temp = ssSnapshotGet(instance, simulation, snapshot))) {
+        fprintf(stderr, "Failed to get a snapshot\n");
+    }
+    if((temp = ssSnapshotLoad(instance, simulation, snapshot))) {
+        fprintf(stderr, "Failed to load a snapshot into a simulation\n");
+    }
+
     while(!ssInstanceShouldClose(instance)) {
         
         if((temp = ssRenderSimulation(instance, simulation))) {
