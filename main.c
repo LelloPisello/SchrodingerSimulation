@@ -39,16 +39,18 @@ int main() {
         return 1;
     }
 
-    
+    uint32_t resolution;
+    SsSimulationCell *cells;
+    ssSnapshotMap(instance, snapshot, &resolution, &cells);
 
-    if((temp = ssUpdateSimulation(instance, SS_DELTA_TIME_INIT, simulation))) {
-        fprintf(stderr, "Failed to update a simulation\n");
-        
+    for(uint32_t x = 0; x < resolution; ++x) {
+        for(uint32_t y = 0; y < resolution; ++y) {
+            cells[x * resolution + y].real = 0.1;
+        }
     }
+    ssSnapshotUnmap(instance, snapshot);
 
-    if((temp = ssSnapshotGet(instance, simulation, snapshot))) {
-        fprintf(stderr, "Failed to get a snapshot\n");
-    }
+
     if((temp = ssSnapshotLoad(instance, simulation, snapshot))) {
         fprintf(stderr, "Failed to load a snapshot into a simulation\n");
     }

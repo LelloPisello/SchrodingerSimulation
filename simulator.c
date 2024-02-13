@@ -522,7 +522,7 @@ SsResult ssUpdateSimulation(SsInstance instance, float deltaTime, SsSimulation s
     _writeSimulationDescriptor(instance, simulation);
     simulation->lastImage = !simulation->lastImage;
     
-    if(deltaTime < 0 && deltaTime > -1.5f) {
+    if(deltaTime < 0) {
         deltaTime = _internalDeltaTime();
     }
 

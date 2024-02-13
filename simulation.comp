@@ -63,10 +63,6 @@ void main() {
     vec2 change = vec2(potential.y - kinetic.y, kinetic.x - potential.x) ;
 
 
-    if(deltaTime <= 0) {
-        imageStore(outputState, coord, vec4(initialState(coord, size), 0, 0));   
-    } else {
         imageStore(outputState, coord, vec4(currentState + change * deltaTime, 0, 0));
-    }
 
 }
