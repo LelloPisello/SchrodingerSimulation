@@ -23,10 +23,10 @@ int main() {
     SsSimulation simulation;
     {
         SsSimulationCreateInfo simInfo = {
-            .resolution = 128,
+            .resolution = 256,
             .scale = 256.0f,
-            .potentialMapType = SS_SIMULATION_POTENTIAL_HYDROGEN_ATOM,
-            .linearFiltering = SS_FALSE,
+            .potentialMapType = SS_SIMULATION_POTENTIAL_LATTICE,
+            .linearFiltering = SS_TRUE,
         };
         if((temp = ssCreateSimulation(instance, &simInfo, &simulation))) {
             fprintf(stderr, "Failed to create simulation, error %u\n", (unsigned)temp);
@@ -46,8 +46,8 @@ int main() {
 
     for(uint32_t x = 0; x < resolution; ++x) {
         for(uint32_t y = 0; y < resolution; ++y) {
-            cells[SS_2D_INDEX(x, y, resolution)].real = sinf(x / (float)resolution * 10);
-            cells[SS_2D_INDEX(x, y, resolution)].imag = sinf(y / (float)resolution * 10);
+            cells[SS_2D_INDEX(x, y, resolution)].real = sinf(x / (float)resolution * 10) * 0.2;
+            cells[SS_2D_INDEX(x, y, resolution)].imag = sinf(y / (float)resolution * 10) * 0.2;
 
         }
     }

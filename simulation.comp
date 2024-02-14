@@ -41,8 +41,14 @@ float potentialF(ivec2 size, ivec2 coord) {
     if(coord.y <= 1 || coord.y + 1 >= size.y) {
         return 1;
     }
-    if(length(coord - size / 2.0) < 20) 
+    float tempLength = length(coord - size / 2.0) / imageSize(inputState).x * 2;
+
+    if(tempLength <= 0.3 && tempLength >= 0.2) {
+        return 1.0 - (tempLength - 0.2) * 10.0;
+    }
+    if(tempLength < 0.2) {
         return 1;
+    }
     return 0;
 }
 

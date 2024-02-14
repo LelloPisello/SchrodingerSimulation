@@ -135,7 +135,13 @@ SsResult ssSnapshotGet(SsInstance instance, SsSimulation simulation, SsSnapshot 
 
 SsResult ssSnapshotLoad(SsInstance instance, SsSimulation simulation, SsSnapshot snapshot) {
     VkCommandBuffer singleTime;
-    ssBeginSingleTimeCommand(instance, SS_QUEUE_FAMILY_COMPUTE, &singleTime);
+    SsResult temp;
+    SS_ERROR_CHECK(temp, ssBeginSingleTimeCommand(instance, SS_QUEUE_FAMILY_COMPUTE, &singleTime));
+
+    //potrei fare una transizione di layout da VK_IMAGE_LAYOUT_GENERAL -> VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+    //o TRANSFER_SRC per snapshotGet
+    //ma nel caso degli snapshot non mi interessa molto la performance
+    
 
     VkBufferImageCopy region = {
         .imageExtent = {
@@ -151,7 +157,7 @@ SsResult ssSnapshotLoad(SsInstance instance, SsSimulation simulation, SsSnapshot
 
     vkCmdCopyBufferToImage(singleTime, snapshot->tempBuffer, simulation->waveImages[simulation->lastImage], VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 
-    ssEndSingleTimeCommand(instance, SS_QUEUE_FAMILY_COMPUTE, singleTime);
+    SS_ERROR_CHECK(temp, ssEndSingleTimeCommand(instance, SS_QUEUE_FAMILY_COMPUTE, singleTime));
 
     return SS_SUCCESS;
 }

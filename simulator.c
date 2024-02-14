@@ -3,6 +3,7 @@
 #include "internal_instance.h"
 #include "internal_simulation.h"
 #include "internal_common.h"
+#include "snapshot.h"
 #include <bits/time.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -14,9 +15,7 @@
 //TODO: 
 //-passare a integrazione runge-kutta(4)
 //      quindi: 3 immagini extra (k1, k2, k3) (k4 calcolata sul momento)
-//-implementare snapshot simulazione
 //-implementare immagini come mappa del potenziale (scene personalizzate)
-//-implementare immagini distribuzione iniziale
 //-aggiungere filtering cubico se disponibile
 
 static void _updateRenderingDescriptor(SsInstance instance, SsSimulation simulation) {
@@ -136,20 +135,113 @@ static SsResult _transitionImageLayouts(SsInstance instance, SsSimulation simula
     SsResult temp;
     SS_ERROR_CHECK(temp, ssTransitionImageLayout(instance, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, simulation->waveImages[0]));
     SS_ERROR_CHECK(temp, ssTransitionImageLayout(instance, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, simulation->waveImages[1]));
-    
+    //SS_ERROR_CHECK(temp, ssTransitionImageLayout(SsInstance instance, VkImageLayout oldLayout, VkImageLayout newLayout, VkImage image))
 
     return SS_SUCCESS;
 }
 
-static SsResult _fillPotentialImage(SsInstance instance, SsSimulation simulation) {
+static void _potentialHydrogen(uint32_t x, uint32_t y, uint8_t *cell) {
+
+}
+
+static void _potentialLattice(uint32_t x, uint32_t y, uint8_t *cell) {
+    *cell = x / 8 % 2 ? 255 : 0;
+}
+
+static SsResult _fillPotentialImage(SsInstance instance, const SsSimulationCreateInfo* info, SsSimulation simulation) {
     SsResult temp;
+
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(instance->vulkanCore.device, simulation->potentialImage, &req);
+
+    
+
+    VkBuffer stagingBuffer;
+    VkBufferCreateInfo bufferInfo = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = req.size,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .pQueueFamilyIndices = &instance->vulkanCore.queueFamilies[SS_QUEUE_FAMILY_COMPUTE],
+        .queueFamilyIndexCount = 1,
+        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    };
+
+    if(vkCreateBuffer(instance->vulkanCore.device, &bufferInfo, NULL, &stagingBuffer)) {
+        return SS_ERROR_BUFFER_CREATION_FAILURE;
+    }
+
+    uint32_t memIndex;
+
+    vkGetBufferMemoryRequirements(instance->vulkanCore.device, stagingBuffer, &req);
+    SS_ERROR_CHECK(temp, ssFindMemoryTypeIndex(instance, req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &memIndex));
+
+    VkDeviceMemory stagingBufferMemory;
+    VkMemoryAllocateInfo stagingMemoryInfo = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .memoryTypeIndex = memIndex,
+        .allocationSize = req.size,
+    };
+
+    if(vkAllocateMemory(instance->vulkanCore.device, &stagingMemoryInfo, NULL, &stagingBufferMemory)) {
+        return SS_ERROR_MEMORY_ALLOCATION_FAILURE;
+    }
+
+    if(vkBindBufferMemory(instance->vulkanCore.device, stagingBuffer, stagingBufferMemory, 0)) {
+        return SS_ERROR_MEMORY_ALLOCATION_FAILURE;
+    }
+
+    uint8_t *mem;
+    if(vkMapMemory(instance->vulkanCore.device, stagingBufferMemory, 0, VK_WHOLE_SIZE, 0, (void**)&mem)){
+        return SS_ERROR_MEMORY_MAP_FAILURE;
+    }
+
+    void (*fillOp)(uint32_t, uint32_t, uint8_t*);
+
+    switch(info->potentialMapType) {
+        case SS_SIMULATION_POTENTIAL_LATTICE:
+            fillOp = _potentialLattice;
+            break;
+        case SS_SIMULATION_POTENTIAL_HYDROGEN_ATOM:
+            fillOp = _potentialHydrogen;
+            break;
+        default:    
+            break;
+    }
+
+    for(uint32_t i = 0; i < simulation->resolution; ++i) {
+        for(uint32_t j = 0; j < simulation->resolution; ++j) {
+            fillOp(i, j, mem + j * simulation->resolution + i);
+        }
+    }
+
+    vkUnmapMemory(instance->vulkanCore.device, stagingBufferMemory);
+    
     SS_ERROR_CHECK(temp, ssTransitionImageLayout(instance, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, simulation->potentialImage));
     
-    VkBuffer stagingBuffer;
-    
+    VkCommandBuffer singleTime;
+    SS_ERROR_CHECK(temp, ssBeginSingleTimeCommand(instance, SS_QUEUE_FAMILY_COMPUTE, &singleTime));
+
+    VkBufferImageCopy copyInfo = {
+        .imageExtent = {
+            simulation->resolution, simulation->resolution, 1
+        },
+        .imageSubresource = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+            .mipLevel = 0
+        }
+    };
+
+    vkCmdCopyBufferToImage(singleTime, stagingBuffer, simulation->potentialImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyInfo);
+
+    SS_ERROR_CHECK(temp, ssEndSingleTimeCommand(instance, SS_QUEUE_FAMILY_COMPUTE, singleTime));
 
     SS_ERROR_CHECK(temp, ssTransitionImageLayout(instance, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, simulation->potentialImage));
     
+    vkDestroyBuffer(instance->vulkanCore.device, stagingBuffer, NULL);
+    vkFreeMemory(instance->vulkanCore.device, stagingBufferMemory, NULL);
 
     return SS_SUCCESS;   
 }
@@ -338,7 +430,7 @@ static SsResult _createImageSamplers(SsInstance instance, SsSimulation simulatio
     if(vkCreateSampler(instance->vulkanCore.device, &samplerInfo, NULL, &simulation->waveSampler)) {
         return SS_ERROR_IMAGE_SAMPLER_CREATION_FAILURE;
     }
-    //inutile tanto non viene usato il sampler nel compute shader
+    
     samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
     samplerInfo.magFilter = samplerInfo.minFilter = VK_FILTER_LINEAR;
 
@@ -379,6 +471,9 @@ SsResult ssCreateSimulation(SsInstance instance, const SsSimulationCreateInfo *i
 
     SS_PRINT("\tTransitioning image for the first time...\n");
     SS_ERROR_CHECK(temp, _transitionImageLayouts(instance, ALIAS));
+
+    SS_PRINT("\tTransitioning and initializing potential image...\n");
+    SS_ERROR_CHECK(temp, _fillPotentialImage(instance, info, ALIAS));
 
     SS_PRINT("\tCreating simulation fence...\n");
     SS_ERROR_CHECK(temp, _createSimulationFence(instance, ALIAS));
@@ -478,6 +573,7 @@ static SsResult _recordSimulationCommand(SsInstance instance, float deltaTime, S
     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
     0, 0, NULL, 0, NULL, 
     1, &imagebarrier);
+
 
     vkCmdPushConstants(instance->simulationCommons.command, instance->simulationCommons.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SsPushConstants), &pushConstant);
     vkCmdDispatch(instance->simulationCommons.command, simulation->resolution / 4, 
